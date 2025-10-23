@@ -50,12 +50,13 @@ export const MODELS = {
     language: 'en'
   },
   
-  // Zero-Shot Classification
+  // Zero-Shot Classification - Not available in transformers.js for German
   ZERO_SHOT: {
-    name: 'Xenova/mbart-large-50-many-to-one-mmt',
+    name: null, // Rule-based implementation
     task: 'zero-shot-classification',
-    label: 'Zero-Shot Klassifizierung',
-    language: 'multilingual'
+    label: 'Zero-Shot Klassifizierung (Nicht verfügbar)',
+    language: 'multilingual',
+    description: 'Nicht verfügbar in Browser-Version'
   },
   
   // Morphology - Rule-based
