@@ -4,6 +4,27 @@ C:\Users\Admin Howzer AI\projects\lyrik-analyzer
 ├── src
 │   ├── assets
 │   │   └── react.svg
+│   ├── components
+│   │   ├── AnalysisDisplay.jsx
+│   │   ├── LoadingSpinner.jsx
+│   │   ├── MetricsPanel.jsx
+│   │   ├── ModelSelector.jsx
+│   │   ├── TextInput.jsx
+│   │   └── WordHighlight.jsx
+│   ├── hooks
+│   │   ├── useModelLoader.js
+│   │   └── useTextAnalysis.js
+│   ├── services
+│   │   ├── modelLoader.js
+│   │   ├── semanticAnalysis.js
+│   │   ├── sentimentAnalysis.js
+│   │   ├── syntaxAnalysis.js
+│   │   ├── textAnalyzer.js
+│   │   └── tokenAnalysis.js
+│   ├── utils
+│   │   ├── colorMapping.js
+│   │   ├── constants.js
+│   │   └── textPreprocessing.js
 │   ├── App.css
 │   ├── App.jsx
 │   ├── index.css
@@ -13,7 +34,11 @@ C:\Users\Admin Howzer AI\projects\lyrik-analyzer
 ├── index.html
 ├── package-lock.json
 ├── package.json
+├── postcss.config.js
+├── PROJECT_OVERVIEW.md
+├── QUICKSTART.md
 ├── README.md
+├── tailwind.config.js
 ├── tree.txt
 ├── tree_dump.py
 └── vite.config.js
