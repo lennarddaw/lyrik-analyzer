@@ -1,6 +1,59 @@
 import { ANALYSIS_CONFIG } from './constants';
 
 /**
+ * Normalisiert UTF-8 Text und behebt Encoding-Probleme
+ * Wandelt falsch kodierte Zeichen zurück zu korrekten deutschen Zeichen
+ * 
+ * @param {string} text - Potenziell falsch kodierter Text
+ * @returns {string} Korrigierter Text
+ */
+export const normalizeUTF8 = (text) => {
+  if (!text || typeof text !== 'string') return text;
+  
+  // Häufige Encoding-Fehler korrigieren
+  const encodingFixes = {
+    'Ã¼': 'ü',
+    'Ã¤': 'ä', 
+    'Ã¶': 'ö',
+    'ÃŸ': 'ß',
+    'Ã„': 'Ä',
+    'Ã–': 'Ö',
+    'Ãœ': 'Ü',
+    'Ã©': 'é',
+    'Ã¨': 'è',
+    'Ã ': 'à',
+    'Ã¢': 'â',
+    'Ã«': 'ë',
+    'Ã®': 'î',
+    'Ã´': 'ô',
+    'Ã»': 'û',
+    'Ã§': 'ç',
+    'â€œ': '"',
+    'â€': '"',
+    'â€™': "'",
+    'â€˜': "'",
+    'â€"': '–',
+    'â€"': '—',
+    'â€¦': '…',
+    'Â»': '»',
+    'Â«': '«',
+    'Â°': '°'
+  };
+  
+  let normalized = text;
+  
+  // Ersetze alle bekannten Encoding-Fehler
+  for (const [wrong, correct] of Object.entries(encodingFixes)) {
+    normalized = normalized.split(wrong).join(correct);
+  }
+  
+  // Unicode Normalization (NFC - Canonical Composition)
+  normalized = normalized.normalize('NFC');
+  
+  return normalized;
+};
+
+/**
  * Tokenisiert Text in Wörter und Interpunktion
  * Verwendet Unicode-sichere Regex für deutsche Zeichen
  * WICHTIG: Dies ist nur ein Fallback - die eigentliche Tokenisierung
@@ -12,18 +65,21 @@ import { ANALYSIS_CONFIG } from './constants';
 export const tokenizeText = (text) => {
   if (!text || typeof text !== 'string') return [];
   
+  // Normalisiere UTF-8 zuerst
+  const normalized = normalizeUTF8(text);
+  
   // Unicode-sichere Regex für deutsche Zeichen inkl. Umlaute
   // \p{L} = alle Unicode-Buchstaben
   // \p{M} = alle Unicode-Markierungen (Akzente, Umlaute)
-  const tokenRegex = /[\p{L}\p{M}]+(?:[-'][\p{L}\p{M}]+)*|[.,!?;:—–\-"""»«()…]/gu;
+  const tokenRegex = /[\p{L}\p{M}]+(?:[-'][\p{L}\p{M}]+)*|[.,!?;:–—\-"""»«()…]/gu;
   
   const tokens = [];
   let match;
   let position = 0;
   
-  while ((match = tokenRegex.exec(text)) !== null) {
+  while ((match = tokenRegex.exec(normalized)) !== null) {
     const tokenText = match[0];
-    const isPunctuation = /^[.,!?;:—–\-"""»«()…]$/u.test(tokenText);
+    const isPunctuation = /^[.,!?;:–—\-"""»«()…]$/u.test(tokenText);
     
     tokens.push({
       text: tokenText,
@@ -47,13 +103,16 @@ export const tokenizeText = (text) => {
 export const sentenceSegmentation = (text) => {
   if (!text || typeof text !== 'string') return [];
   
+  // Normalisiere UTF-8 zuerst
+  const normalized = normalizeUTF8(text);
+  
   // Intelligentere Satztrennung, die Abkürzungen berücksichtigt
   // Negatives Lookbehind für gängige Abkürzungen
   const sentences = [];
   const abbreviations = /(?:Dr|Prof|etc|z\.B|d\.h|u\.a|usw|bzw|inkl|evtl|ggf)/u;
   
   // Teile zunächst am Zeilenumbruch für Verse
-  const lines = text.split('\n');
+  const lines = normalized.split('\n');
   
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -66,315 +125,411 @@ export const sentenceSegmentation = (text) => {
       currentSentence += lineSentences[i];
       
       // Prüfe ob es ein Satzende ist (keine Abkürzung)
-      if (/[.!?…]+\s+$/u.test(lineSentences[i]) || i === lineSentences.length - 1) {
-        const trimmed = currentSentence.trim();
-        if (trimmed.length > 0 && !abbreviations.test(trimmed)) {
-          sentences.push({
-            text: trimmed,
-            index: sentences.length,
-            wordCount: trimmed.split(/\s+/u).length
-          });
-          currentSentence = '';
-        }
+      if (/[.!?…]/.test(currentSentence) && 
+          !abbreviations.test(currentSentence)) {
+        sentences.push({
+          text: currentSentence.trim(),
+          index: sentences.length,
+          length: currentSentence.trim().length
+        });
+        currentSentence = '';
       }
     }
     
-    // Falls noch Text übrig ist
+    // Füge verbleibenden Text als Satz hinzu
     if (currentSentence.trim()) {
       sentences.push({
         text: currentSentence.trim(),
         index: sentences.length,
-        wordCount: currentSentence.trim().split(/\s+/u).length
+        length: currentSentence.trim().length
       });
     }
   }
   
-  return sentences;
+  return sentences.length > 0 ? sentences : [{ text: normalized.trim(), index: 0, length: normalized.trim().length }];
 };
 
 /**
- * Normalisiert Text für Verarbeitung
+ * Erkennt Verse in einem Text (für Gedichte)
+ * Teilt Text nach Zeilenumbrüchen und analysiert Vers-Struktur
  * 
  * @param {string} text - Input Text
- * @param {object} options - Normalisierungsoptionen
- * @returns {string} Normalisierter Text
- */
-export const normalizeText = (text, options = {}) => {
-  const {
-    lowercase = false,
-    removeExtraSpaces = true,
-    preserveLineBreaks = true
-  } = options;
-  
-  let normalized = text;
-  
-  if (removeExtraSpaces) {
-    if (preserveLineBreaks) {
-      // Entferne Spaces aber behalte Zeilenumbrüche
-      normalized = normalized
-        .split('\n')
-        .map(line => line.replace(/\s+/gu, ' ').trim())
-        .join('\n');
-    } else {
-      normalized = normalized.replace(/\s+/gu, ' ').trim();
-    }
-  }
-  
-  if (lowercase) {
-    normalized = normalized.toLowerCase();
-  }
-  
-  return normalized;
-};
-
-/**
- * Erkennt Vers-Struktur in Gedichten
- * 
- * @param {string} text - Gedicht-Text
- * @returns {Array} Array von Versen mit Metadaten
+ * @returns {Array} Array von Vers-Objekten
  */
 export const detectVerses = (text) => {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (!text || typeof text !== 'string') return [];
   
-  if (lines.length < 2) {
-    return []; // Kein Gedicht
-  }
+  // Normalisiere UTF-8 zuerst
+  const normalized = normalizeUTF8(text);
   
-  return lines.map((line, index) => ({
-    text: line,
-    index,
-    wordCount: line.split(/\s+/u).length,
-    charCount: line.length,
-    startsWithCapital: /^[\p{Lu}]/u.test(line),
-    endsWithPunctuation: /[.!?,;:]$/u.test(line)
-  }));
-};
-
-/**
- * Schätzt Silbenanzahl für deutsche Wörter
- * Basiert auf linguistischen Regeln für deutsche Silbenstruktur
- * 
- * @param {string} text - Wort oder Text
- * @returns {number} Geschätzte Silbenanzahl
- */
-export const estimateSyllables = (text) => {
-  if (!text || typeof text !== 'string') return 0;
+  // Teile nach Zeilenumbrüchen
+  const lines = normalized.split('\n');
+  const verses = [];
   
-  const words = text.toLowerCase().split(/\s+/u);
-  let totalSyllables = 0;
+  let verseIndex = 0;
+  let stanzaIndex = 0;
+  let versesInStanza = [];
   
-  for (const word of words) {
-    if (word.length === 0) continue;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
     
-    // Zähle Vokalgruppen als Silbenkerne
-    // Deutsche Vokale inkl. Umlaute und Diphthonge
-    const vowelGroups = word.match(/[aeiouäöüy]+|ei|eu|au|äu|ie/gu);
-    let syllables = vowelGroups ? vowelGroups.length : 1;
-    
-    // Korrekturen für spezielle Fälle
-    // Stummes e am Ende bei bestimmten Endungen
-    if (/[^aeiouäöüy]e$/u.test(word) && syllables > 1) {
-      syllables--;
+    // Leere Zeile = neue Strophe
+    if (!line) {
+      if (versesInStanza.length > 0) {
+        stanzaIndex++;
+        versesInStanza = [];
+      }
+      continue;
     }
     
-    // Mindestens 1 Silbe pro Wort
-    totalSyllables += Math.max(1, syllables);
+    // Erstelle Vers-Objekt
+    const verse = {
+      text: line,
+      index: verseIndex,
+      stanza: stanzaIndex,
+      verseInStanza: versesInStanza.length,
+      length: line.length,
+      wordCount: line.split(/\s+/).filter(w => w.length > 0).length,
+      syllables: estimateSyllables(line)
+    };
+    
+    verses.push(verse);
+    versesInStanza.push(verse);
+    verseIndex++;
   }
   
-  return totalSyllables;
+  return verses;
 };
 
 /**
- * Berechnet Lesbarkeits-Metriken
- * Verwendet mehrere Indizes für umfassende Bewertung
+ * Schätzt Silbenzahl eines deutschen Wortes oder Textes
  * 
- * @param {string} text - Text
- * @returns {object} Metriken-Objekt
+ * @param {string} text - Wort oder Text
+ * @returns {number} Geschätzte Silbenzahl
  */
-export const calculateReadabilityMetrics = (text) => {
-  const sentences = sentenceSegmentation(text);
-  const tokens = tokenizeText(text);
+export const estimateSyllables = (text) => {
+  if (!text || text.length === 0) return 0;
+  
+  // Wenn es mehrere Wörter sind, summiere die Silben
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  if (words.length > 1) {
+    return words.reduce((sum, word) => sum + estimateSyllables(word), 0);
+  }
+  
+  const lower = text.toLowerCase();
+  
+  // Zähle Vokale und Diphthonge
+  const vowels = lower.match(/[aeiouäöüy]+/g);
+  if (!vowels) return 1;
+  
+  let count = vowels.length;
+  
+  // Korrigiere für deutsche Diphthonge
+  const diphthongs = ['au', 'äu', 'ei', 'eu', 'ai', 'ie'];
+  for (const diphthong of diphthongs) {
+    const matches = lower.match(new RegExp(diphthong, 'g'));
+    if (matches) {
+      count -= matches.length * 0.5;
+    }
+  }
+  
+  // Minimum 1 Silbe
+  return Math.max(1, Math.round(count));
+};
+
+/**
+ * Berechnet Text-Statistiken
+ * 
+ * @param {Array} tokens - Token-Array
+ * @param {Array} sentences - Satz-Array
+ * @returns {Object} Statistik-Objekt
+ */
+export const calculateStatistics = (tokens, sentences) => {
   const words = tokens.filter(t => !t.isPunctuation);
-  const syllables = estimateSyllables(text);
+  const uniqueWords = new Set(words.map(t => t.text.toLowerCase()));
   
-  const wordCount = words.length;
-  const sentenceCount = Math.max(sentences.length, 1);
-  const syllableCount = syllables;
+  const totalChars = words.reduce((sum, t) => sum + t.length, 0);
+  const avgWordLength = words.length > 0 ? (totalChars / words.length).toFixed(2) : 0;
   
-  const avgWordsPerSentence = (wordCount / sentenceCount).toFixed(2);
-  const avgSyllablesPerWord = (syllableCount / Math.max(wordCount, 1)).toFixed(2);
-  
-  // Flesch-Reading-Ease (angepasst für Deutsch - Amstad-Formel)
-  // FRE = 180 - ASL - (58.5 × ASW)
-  // ASL = durchschnittliche Satzlänge
-  // ASW = durchschnittliche Silben pro Wort
-  const asl = wordCount / sentenceCount;
-  const asw = syllableCount / Math.max(wordCount, 1);
-  const fleschReading = 180 - asl - (58.5 * asw);
-  const readingEase = Math.max(0, Math.min(100, fleschReading)).toFixed(2);
-  
-  // Wiener Sachtextformel (für deutsche Texte)
-  // WSTF = 0.1935 × MS + 0.1672 × SL + 0.1297 × IW - 0.0327 × ES - 0.875
-  // MS = Prozentsatz mehrsilbiger Wörter
-  // SL = durchschnittliche Satzlänge in Wörtern
-  // IW = Prozentsatz langer Wörter (>6 Buchstaben)
-  // ES = Prozentsatz einsilbiger Wörter
-  const multiSyllableWords = words.filter(w => {
-    const s = estimateSyllables(w.text);
-    return s >= 3;
-  }).length;
-  const longWords = words.filter(w => w.text.length > 6).length;
-  const monoSyllableWords = words.filter(w => estimateSyllables(w.text) === 1).length;
-  
-  const ms = (multiSyllableWords / Math.max(wordCount, 1)) * 100;
-  const sl = avgWordsPerSentence;
-  const iw = (longWords / Math.max(wordCount, 1)) * 100;
-  const es = (monoSyllableWords / Math.max(wordCount, 1)) * 100;
-  
-  const wstf = 0.1935 * ms + 0.1672 * sl + 0.1297 * iw - 0.0327 * es - 0.875;
-  const wienerIndex = Math.max(0, Math.min(20, wstf)).toFixed(2);
-  
-  // Lexikalische Dichte (unique words / total words)
-  const uniqueWords = new Set(words.map(w => w.text.toLowerCase()));
-  const lexicalDensity = ((uniqueWords.size / Math.max(wordCount, 1)) * 100).toFixed(2);
+  const avgWordsPerSentence = sentences.length > 0 
+    ? (words.length / sentences.length).toFixed(2) 
+    : 0;
   
   return {
-    wordCount,
-    sentenceCount,
-    syllableCount,
-    uniqueWordCount: uniqueWords.size,
-    avgWordsPerSentence,
-    avgSyllablesPerWord,
-    avgWordLength: (words.reduce((sum, w) => sum + w.text.length, 0) / Math.max(wordCount, 1)).toFixed(2),
-    readingEase, // 0-100, höher = leichter
-    wienerIndex, // 4-15 optimal, >15 = schwer
-    lexicalDensity, // 0-100, höher = mehr Variation
-    multiSyllablePercentage: ms.toFixed(2),
-    longWordPercentage: iw.toFixed(2)
+    wordCount: words.length,
+    uniqueWords: uniqueWords.size,
+    sentenceCount: sentences.length,
+    avgWordLength: parseFloat(avgWordLength),
+    avgWordsPerSentence: parseFloat(avgWordsPerSentence),
+    punctuationCount: tokens.filter(t => t.isPunctuation).length,
+    typeTokenRatio: words.length > 0 
+      ? (uniqueWords.size / words.length).toFixed(3) 
+      : 0
   };
 };
 
 /**
- * Validiert Eingabe-Text
+ * Berechnet Lesbarkeits-Scores
  * 
- * @param {string} text - Input Text
- * @returns {object} Validierungs-Ergebnis
+ * @param {Object} stats - Statistik-Objekt
+ * @param {Array} tokens - Token-Array
+ * @returns {Object} Lesbarkeits-Scores
  */
-export const validateText = (text) => {
-  if (!text || typeof text !== 'string') {
-    return { 
-      valid: false, 
-      error: 'Text ist erforderlich',
-      errorCode: 'MISSING_TEXT'
-    };
+export const calculateReadability = (stats, tokens) => {
+  const words = tokens.filter(t => !t.isPunctuation);
+  
+  // Flesch Reading Ease (adaptiert für Deutsch)
+  // Höhere Werte = leichter zu lesen
+  const asl = stats.avgWordsPerSentence || 1;
+  const asw = stats.avgWordLength || 1;
+  const readingEase = Math.max(0, Math.min(100, 
+    180 - asl - (58.5 * asw)
+  ));
+  
+  // Wiener Sachtextformel (für Deutsch)
+  // Niedrigere Werte = leichter zu lesen
+  const ms = countMultiSyllableWords(words);
+  const iw = countLongWords(words);
+  const es = countMonosyllableWords(words);
+  
+  const wienerIndex = (
+    0.1935 * ms + 
+    0.1672 * asl + 
+    0.1297 * iw - 
+    0.0327 * es - 
+    0.875
+  ).toFixed(2);
+  
+  // Lexical Density (Inhaltswörter / Gesamtwörter)
+  const contentWords = words.filter(w => isContentWord(w.text));
+  const lexicalDensity = words.length > 0 
+    ? ((contentWords.length / words.length) * 100).toFixed(2)
+    : 0;
+  
+  return {
+    fleschReadingEase: readingEase.toFixed(2),
+    wienerSachtextformel: wienerIndex,
+    lexicalDensity: parseFloat(lexicalDensity),
+    interpretation: interpretReadability(readingEase, wienerIndex)
+  };
+};
+
+/**
+ * Zählt mehrsilbige Wörter
+ * @private
+ */
+const countMultiSyllableWords = (words) => {
+  return words.filter(w => {
+    const syllables = estimateSyllables(w.text);
+    return syllables >= 3;
+  }).length;
+};
+
+/**
+ * Zählt lange Wörter (>6 Zeichen)
+ * @private
+ */
+const countLongWords = (words) => {
+  return words.filter(w => w.text.length > 6).length;
+};
+
+/**
+ * Zählt einsilbige Wörter
+ * @private
+ */
+const countMonosyllableWords = (words) => {
+  return words.filter(w => {
+    const syllables = estimateSyllables(w.text);
+    return syllables === 1;
+  }).length;
+};
+
+/**
+ * Prüft ob Wort ein Inhaltswort ist (vs. Funktionswort)
+ * @private
+ */
+const isContentWord = (word) => {
+  const lower = word.toLowerCase();
+  const functionWords = [
+    // Artikel
+    'der', 'die', 'das', 'ein', 'eine', 'einen', 'einem', 'eines',
+    // Pronomen
+    'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'mich', 'dich', 'sich',
+    // Präpositionen
+    'in', 'an', 'auf', 'von', 'zu', 'mit', 'bei', 'nach', 'vor', 'über', 'unter',
+    // Konjunktionen
+    'und', 'oder', 'aber', 'denn', 'weil', 'dass', 'wenn', 'als',
+    // Hilfsverben
+    'sein', 'haben', 'werden', 'ist', 'war', 'hat', 'hatte', 'bin', 'sind'
+  ];
+  
+  return !functionWords.includes(lower) && word.length > 2;
+};
+
+/**
+ * Interpretiert Lesbarkeits-Scores
+ * @private
+ */
+const interpretReadability = (fleschScore, wienerIndex) => {
+  let interpretation = '';
+  
+  if (fleschScore >= 80) {
+    interpretation = 'Sehr leicht zu lesen';
+  } else if (fleschScore >= 60) {
+    interpretation = 'Leicht zu lesen';
+  } else if (fleschScore >= 40) {
+    interpretation = 'Mittelschwer';
+  } else if (fleschScore >= 20) {
+    interpretation = 'Schwer zu lesen';
+  } else {
+    interpretation = 'Sehr schwer zu lesen';
   }
   
-  const trimmed = text.trim();
+  if (wienerIndex < 4) {
+    interpretation += ' (Grundschulniveau)';
+  } else if (wienerIndex < 10) {
+    interpretation += ' (Mittelstufe)';
+  } else if (wienerIndex < 15) {
+    interpretation += ' (Oberstufe)';
+  } else {
+    interpretation += ' (Akademisch)';
+  }
+  
+  return interpretation;
+};
+
+/**
+ * Validiert Input-Text
+ * 
+ * @param {string} text - Zu validierender Text
+ * @returns {Object} Validierungs-Ergebnis
+ */
+export const validateText = (text) => {
+  if (!text) {
+    return { valid: false, error: 'Kein Text vorhanden' };
+  }
+  
+  if (typeof text !== 'string') {
+    return { valid: false, error: 'Text muss ein String sein' };
+  }
+  
+  // Normalisiere UTF-8
+  const normalized = normalizeUTF8(text);
+  const trimmed = normalized.trim();
   
   if (trimmed.length < ANALYSIS_CONFIG.TEXT.MIN_LENGTH) {
     return { 
       valid: false, 
-      error: `Text ist zu kurz (mind. ${ANALYSIS_CONFIG.TEXT.MIN_LENGTH} Zeichen)`,
-      errorCode: 'TEXT_TOO_SHORT',
-      length: trimmed.length
+      error: `Text zu kurz (min. ${ANALYSIS_CONFIG.TEXT.MIN_LENGTH} Zeichen)` 
     };
   }
   
   if (trimmed.length > ANALYSIS_CONFIG.TEXT.MAX_LENGTH) {
     return { 
       valid: false, 
-      error: `Text ist zu lang (max. ${ANALYSIS_CONFIG.TEXT.MAX_LENGTH} Zeichen)`,
-      errorCode: 'TEXT_TOO_LONG',
-      length: trimmed.length
+      error: `Text zu lang (max. ${ANALYSIS_CONFIG.TEXT.MAX_LENGTH} Zeichen)` 
     };
   }
   
-  // Prüfe auf gültige Zeichen (mindestens einige Buchstaben)
-  const letterCount = (trimmed.match(/[\p{L}]/gu) || []).length;
-  if (letterCount < 5) {
-    return {
-      valid: false,
-      error: 'Text muss mindestens 5 Buchstaben enthalten',
-      errorCode: 'INSUFFICIENT_LETTERS',
-      letterCount
-    };
-  }
-  
-  return { 
-    valid: true, 
-    text: trimmed,
-    length: trimmed.length,
-    letterCount
-  };
+  return { valid: true, text: trimmed };
 };
 
 /**
- * Extrahiert Textstatistiken
- * 
- * @param {string} text - Input Text  
- * @returns {object} Statistiken
- */
-export const extractTextStatistics = (text) => {
-  const tokens = tokenizeText(text);
-  const words = tokens.filter(t => !t.isPunctuation);
-  const sentences = sentenceSegmentation(text);
-  const verses = detectVerses(text);
-  
-  return {
-    charCount: text.length,
-    wordCount: words.length,
-    sentenceCount: sentences.length,
-    verseCount: verses.length,
-    punctuationCount: tokens.length - words.length,
-    avgWordLength: words.length > 0 
-      ? (words.reduce((sum, w) => sum + w.text.length, 0) / words.length).toFixed(2)
-      : 0,
-    isPoem: verses.length >= 2,
-    hasLineBreaks: text.includes('\n')
-  };
-};
-
-/**
- * Bereitet Text für Modell-Verarbeitung vor
+ * Bereitet Text für Modell-Input vor
+ * Hauptfunktion für Text-Preprocessing
  * 
  * @param {string} text - Input Text
- * @returns {object} Aufbereiteter Text mit Metadaten
+ * @returns {Object} Vorbereitete Text-Daten
  */
 export const prepareForModel = (text) => {
-  const normalized = normalizeText(text, { 
-    removeExtraSpaces: true, 
-    preserveLineBreaks: true 
-  });
+  // Normalisiere UTF-8
+  const normalized = normalizeUTF8(text);
   
+  // Tokenisierung
   const tokens = tokenizeText(normalized);
+  
+  // Satzsegmentierung
   const sentences = sentenceSegmentation(normalized);
-  const statistics = extractTextStatistics(normalized);
-  const readability = calculateReadabilityMetrics(normalized);
+  
+  // Statistiken
+  const statistics = calculateStatistics(tokens, sentences);
+  
+  // Lesbarkeit
+  const readability = calculateReadability(statistics, tokens);
   
   return {
-    original: text,
     normalized,
     tokens,
     sentences,
     statistics,
-    readability,
-    metadata: {
-      preparedAt: new Date().toISOString(),
-      language: 'de',
-      encoding: 'utf-8'
-    }
+    readability
   };
 };
 
-// Export für Verwendung
+/**
+ * Bereinigt Text von überflüssigen Zeichen
+ * 
+ * @param {string} text - Input Text
+ * @returns {string} Bereinigter Text
+ */
+export const cleanText = (text) => {
+  if (!text || typeof text !== 'string') return '';
+  
+  let cleaned = normalizeUTF8(text);
+  
+  // Entferne mehrfache Leerzeichen
+  cleaned = cleaned.replace(/\s+/g, ' ');
+  
+  // Entferne Leerzeichen vor Interpunktion
+  cleaned = cleaned.replace(/\s+([.,!?;:])/g, '$1');
+  
+  // Füge Leerzeichen nach Interpunktion hinzu
+  cleaned = cleaned.replace(/([.,!?;:])([^\s])/g, '$1 $2');
+  
+  return cleaned.trim();
+};
+
+/**
+ * Extrahiert Wörter aus Text
+ * 
+ * @param {string} text - Input Text
+ * @returns {Array} Array von Wörtern
+ */
+export const extractWords = (text) => {
+  const tokens = tokenizeText(text);
+  return tokens
+    .filter(t => !t.isPunctuation)
+    .map(t => t.text);
+};
+
+/**
+ * Zählt Wort-Frequenzen
+ * 
+ * @param {Array} words - Wort-Array
+ * @returns {Map} Frequenz-Map
+ */
+export const countWordFrequencies = (words) => {
+  const frequencies = new Map();
+  
+  for (const word of words) {
+    const lower = word.toLowerCase();
+    frequencies.set(lower, (frequencies.get(lower) || 0) + 1);
+  }
+  
+  return frequencies;
+};
+
 export default {
+  normalizeUTF8,
   tokenizeText,
   sentenceSegmentation,
-  normalizeText,
   detectVerses,
   estimateSyllables,
-  calculateReadabilityMetrics,
+  calculateStatistics,
+  calculateReadability,
   validateText,
-  extractTextStatistics,
-  prepareForModel
+  prepareForModel,
+  cleanText,
+  extractWords,
+  countWordFrequencies
 };

@@ -1,9 +1,9 @@
 import { getModel } from './modelLoader';
-import { UNIVERSAL_POS_TAGS, ENTITY_LABELS, MORPHOLOGICAL_FEATURES, ANALYSIS_CONFIG } from '../utils/constants';
+import { UNIVERSAL_POS_TAGS, ENTITY_LABELS, MORPHOLOGICAL_FEATURES, ANALYSIS_CONFIG, GERMAN_POS_RULES, FEATURES } from '../utils/constants';
 
 /**
  * Analysiert Token-Level Features (POS-Tagging, NER, Morphologie)
- * Vollständig modellbasiert, keine Heuristiken
+ * Mit regelbasiertem Fallback für Deutsch
  * 
  * @param {string} text - Input Text
  * @param {Array} tokens - Token-Array aus Preprocessing
@@ -23,7 +23,7 @@ export const analyzeTokens = async (text, tokens) => {
       lemma: null
     }));
 
-    // 1. Named Entity Recognition
+    // 1. Named Entity Recognition (mit strengem Confidence-Threshold)
     const nerModel = getModel('NER');
     if (nerModel) {
       annotatedTokens = await applyNER(text, annotatedTokens, nerModel);
@@ -32,70 +32,70 @@ export const analyzeTokens = async (text, tokens) => {
     // 2. Part-of-Speech Tagging
     const posModel = getModel('POS');
     if (posModel) {
+      // Verwende echtes POS-Modell
       annotatedTokens = await applyPOSTagging(text, annotatedTokens, posModel);
-    } else {
-      // Fallback: Verwende NER-Modell auch für POS wenn verfügbar
-      if (nerModel) {
-        console.log('POS-Model nicht geladen, verwende NER-Model für Token-Classification');
-        annotatedTokens = await applyPOSTagging(text, annotatedTokens, nerModel);
-      }
+    } else if (FEATURES.RULE_BASED_POS) {
+      // Fallback auf regelbasiertes POS für Deutsch
+      console.log('⚙️ Verwende regelbasiertes POS-Tagging für Deutsch');
+      annotatedTokens = applyRuleBasedPOS(annotatedTokens);
     }
 
-    // 3. Morphologische Analyse
-    const morphModel = getModel('MORPHOLOGY');
-    if (morphModel) {
-      annotatedTokens = await applyMorphology(text, annotatedTokens, morphModel);
+    // 3. Morphologische Analyse (regelbasiert für Deutsch)
+    if (FEATURES.MORPHOLOGICAL_ANALYSIS) {
+      annotatedTokens = applyGermanMorphology(annotatedTokens);
     }
 
-    // 4. Berechne abgeleitete Features (ohne Heuristiken, nur aus Modell-Outputs)
+    // 4. Berechne abgeleitete Features
     annotatedTokens = enrichTokensWithDerivedFeatures(annotatedTokens);
 
     return annotatedTokens;
   } catch (error) {
     console.error('Token-Analyse Fehler:', error);
-    // Gib Tokens ohne Annotation zurück statt zu failen
-    return tokens.map(token => ({
+    // Gib Tokens mit regelbasiertem POS zurück
+    return applyRuleBasedPOS(tokens.map(token => ({
       ...token,
       entity: null,
       entityType: null,
       posTag: null,
       morphology: null,
       error: error.message
-    }));
+    })));
   }
 };
 
 /**
  * Wendet Named Entity Recognition an
+ * Mit STRENGEM Confidence-Threshold für bessere Präzision
  * @private
  */
 const applyNER = async (text, tokens, model) => {
   try {
     const results = await model(text, {
-      aggregation_strategy: 'simple' // Gruppiere Sub-Token zu ganzen Wörtern
+      aggregation_strategy: 'simple'
     });
 
-    // Mappe NER-Ergebnisse zu Tokens
     const annotated = [...tokens];
+    const threshold = ANALYSIS_CONFIG.THRESHOLDS.ENTITY_CONFIDENCE;
     
     for (const entity of results) {
-      const entityWord = entity.word.replace(/^##/, '').trim(); // Entferne BERT-Subtoken-Marker
+      // WICHTIG: Nur Entities mit hoher Confidence akzeptieren
+      if (entity.score < threshold) {
+        continue;
+      }
+      
+      const entityWord = entity.word.replace(/^##/, '').trim();
       
       // Finde passende Tokens
       for (let i = 0; i < annotated.length; i++) {
         const token = annotated[i];
         
-        // Überspringe Interpunktion
         if (token.isPunctuation) continue;
         
-        // Exakte Übereinstimmung oder Teilübereinstimmung
         const tokenText = token.text.toLowerCase();
         const entityText = entityWord.toLowerCase();
         
-        if (tokenText === entityText || 
-            tokenText.includes(entityText) || 
-            entityText.includes(tokenText)) {
-          
+        // Nur bei starker Übereinstimmung
+        if (tokenText === entityText) {
           annotated[i] = {
             ...token,
             entity: entity.entity_group || entity.entity,
@@ -116,12 +116,11 @@ const applyNER = async (text, tokens, model) => {
 };
 
 /**
- * Wendet Part-of-Speech Tagging an
+ * Wendet Part-of-Speech Tagging mit echtem POS-Modell an
  * @private
  */
 const applyPOSTagging = async (text, tokens, model) => {
   try {
-    // Verwende Token-Classification für POS-Tagging
     const results = await model(text, {
       aggregation_strategy: 'simple'
     });
@@ -131,7 +130,6 @@ const applyPOSTagging = async (text, tokens, model) => {
     for (const posResult of results) {
       const word = posResult.word.replace(/^##/, '').trim();
       
-      // Finde passende Tokens
       for (let i = 0; i < annotated.length; i++) {
         const token = annotated[i];
         
@@ -149,13 +147,9 @@ const applyPOSTagging = async (text, tokens, model) => {
         const tokenText = token.text.toLowerCase();
         const posText = word.toLowerCase();
         
-        if (tokenText === posText || 
-            tokenText.includes(posText) || 
-            posText.includes(tokenText)) {
-          
-          // Extrahiere POS-Tag aus Entity-Label (bei NER-Modellen)
-          // oder verwende direkt wenn POS-spezifisches Modell
-          const posTag = extractPOSTag(posResult.entity_group || posResult.entity);
+        if (tokenText === posText) {
+          // Extrahiere POS-Tag aus Modell-Output
+          const posTag = extractPOSFromModel(posResult);
           
           annotated[i] = {
             ...token,
@@ -170,57 +164,349 @@ const applyPOSTagging = async (text, tokens, model) => {
     return annotated;
   } catch (error) {
     console.error('POS-Tagging Fehler:', error);
-    return tokens;
+    return applyRuleBasedPOS(tokens);
   }
 };
 
 /**
- * Wendet morphologische Analyse an
+ * Regelbasiertes POS-Tagging für Deutsch
+ * Verwendet linguistische Regeln und Wortlisten
  * @private
  */
-const applyMorphology = async (text, tokens, model) => {
-  try {
-    const results = await model(text, {
-      aggregation_strategy: 'simple'
-    });
+const applyRuleBasedPOS = (tokens) => {
+  return tokens.map(token => {
+    if (token.isPunctuation) {
+      return {
+        ...token,
+        posTag: 'PUNCT',
+        posScore: 1.0,
+        posInfo: UNIVERSAL_POS_TAGS.PUNCT
+      };
+    }
 
-    const annotated = [...tokens];
-    
-    for (const morphResult of results) {
-      const word = morphResult.word.replace(/^##/, '').trim();
-      
-      for (let i = 0; i < annotated.length; i++) {
-        const token = annotated[i];
-        if (token.isPunctuation) continue;
-        
-        const tokenText = token.text.toLowerCase();
-        const morphText = word.toLowerCase();
-        
-        if (tokenText === morphText) {
-          const morphFeatures = parseMorphologicalFeatures(morphResult.entity_group || morphResult.entity);
-          
-          annotated[i] = {
-            ...token,
-            morphology: {
-              features: morphFeatures,
-              score: morphResult.score,
-              raw: morphResult.entity_group || morphResult.entity
-            }
-          };
-        }
+    const word = token.text;
+    const wordLower = word.toLowerCase();
+    let posTag = 'X'; // Default: unbekannt
+    let posScore = 0.8; // Regel-basiert hat mittlere Confidence
+
+    // 1. Artikel / Determiner
+    if (GERMAN_POS_RULES.ARTICLES.includes(wordLower)) {
+      posTag = 'DET';
+      posScore = 0.95;
+    }
+    // 2. Pronomen
+    else if (GERMAN_POS_RULES.PRONOUNS.includes(wordLower)) {
+      posTag = 'PRON';
+      posScore = 0.95;
+    }
+    // 3. Possessivpronomen
+    else if (GERMAN_POS_RULES.POSSESSIVE.some(p => wordLower.startsWith(p))) {
+      posTag = 'DET'; // Possessive als Determiner
+      posScore = 0.9;
+    }
+    // 4. Präpositionen
+    else if (GERMAN_POS_RULES.PREPOSITIONS.includes(wordLower)) {
+      posTag = 'ADP';
+      posScore = 0.95;
+    }
+    // 5. Konjunktionen (koordinierend)
+    else if (GERMAN_POS_RULES.CONJUNCTIONS.includes(wordLower)) {
+      posTag = 'CCONJ';
+      posScore = 0.95;
+    }
+    // 6. Subjunktionen (subordinierend)
+    else if (GERMAN_POS_RULES.SUBJUNCTIONS.includes(wordLower)) {
+      posTag = 'SCONJ';
+      posScore = 0.95;
+    }
+    // 7. Hilfsverben
+    else if (GERMAN_POS_RULES.AUXILIARIES.includes(wordLower)) {
+      posTag = 'AUX';
+      posScore = 0.9;
+    }
+    // 8. Modalverben (auch als AUX behandeln)
+    else if (GERMAN_POS_RULES.MODALS.includes(wordLower)) {
+      posTag = 'AUX';
+      posScore = 0.9;
+    }
+    // 9. Partikeln
+    else if (GERMAN_POS_RULES.PARTICLES.includes(wordLower)) {
+      posTag = 'PART';
+      posScore = 0.9;
+    }
+    // 10. Adverbien (häufige)
+    else if (GERMAN_POS_RULES.ADVERBS.includes(wordLower)) {
+      posTag = 'ADV';
+      posScore = 0.85;
+    }
+    // 11. Heuristiken für Wortarten
+    else {
+      // Großgeschrieben -> wahrscheinlich Nomen
+      if (/^\p{Lu}/u.test(word)) {
+        posTag = 'NOUN';
+        posScore = 0.7;
+      }
+      // Endet auf -en, -st, -t -> wahrscheinlich Verb
+      else if (/(?:en|st|t)$/i.test(word)) {
+        posTag = 'VERB';
+        posScore = 0.6;
+      }
+      // Endet auf -lich, -ig, -isch, -bar, -sam -> wahrscheinlich Adjektiv
+      else if (/(?:lich|ig|isch|bar|sam|haft)$/i.test(word)) {
+        posTag = 'ADJ';
+        posScore = 0.65;
+      }
+      // Enthält Zahlen -> Numerale
+      else if (/\d/.test(word)) {
+        posTag = 'NUM';
+        posScore = 0.9;
       }
     }
 
-    return annotated;
-  } catch (error) {
-    console.error('Morphologie Fehler:', error);
-    return tokens;
+    return {
+      ...token,
+      posTag,
+      posScore,
+      posInfo: UNIVERSAL_POS_TAGS[posTag] || UNIVERSAL_POS_TAGS.X
+    };
+  });
+};
+
+/**
+ * Extrahiert POS-Tag aus Modell-Output
+ * @private
+ */
+const extractPOSFromModel = (result) => {
+  if (!result.entity_group && !result.entity) return 'X';
+  
+  const label = (result.entity_group || result.entity).toUpperCase();
+  
+  // Direktes Mapping wenn Universal POS Tag
+  if (UNIVERSAL_POS_TAGS[label]) {
+    return label;
   }
+  
+  // Alternative Labels mappen
+  const mapping = {
+    'NOUN': 'NOUN',
+    'PROPN': 'NOUN',
+    'VERB': 'VERB',
+    'ADJ': 'ADJ',
+    'ADV': 'ADV',
+    'PRON': 'PRON',
+    'DET': 'DET',
+    'ADP': 'ADP',
+    'CONJ': 'CCONJ',
+    'CCONJ': 'CCONJ',
+    'SCONJ': 'SCONJ',
+    'NUM': 'NUM',
+    'AUX': 'AUX',
+    'PART': 'PART',
+    'INTJ': 'INTJ',
+    'PUNCT': 'PUNCT',
+    'SYM': 'X'
+  };
+  
+  return mapping[label] || 'X';
+};
+
+/**
+ * Wendet deutsche morphologische Analyse an (regelbasiert)
+ * @private
+ */
+const applyGermanMorphology = (tokens) => {
+  return tokens.map(token => {
+    if (token.isPunctuation || !token.posTag) {
+      return token;
+    }
+
+    const morphology = {
+      features: {},
+      syllables: estimateSyllables(token.text),
+      complexity: estimateComplexity(token.text)
+    };
+
+    // Morphologische Features basierend auf POS-Tag
+    switch (token.posTag) {
+      case 'NOUN':
+        morphology.features = analyzeNounMorphology(token.text);
+        break;
+      case 'VERB':
+      case 'AUX':
+        morphology.features = analyzeVerbMorphology(token.text);
+        break;
+      case 'ADJ':
+        morphology.features = analyzeAdjectiveMorphology(token.text);
+        break;
+      case 'PRON':
+      case 'DET':
+        morphology.features = analyzePronounMorphology(token.text);
+        break;
+    }
+
+    return {
+      ...token,
+      morphology
+    };
+  });
+};
+
+/**
+ * Analysiert Nomen-Morphologie
+ * @private
+ */
+const analyzeNounMorphology = (word) => {
+  const features = {};
+  
+  // Genus (sehr vereinfacht, nur Heuristiken)
+  if (word.endsWith('ung') || word.endsWith('heit') || word.endsWith('keit')) {
+    features.gender = 'FEM';
+  } else if (word.endsWith('chen') || word.endsWith('lein')) {
+    features.gender = 'NEUT';
+  }
+  
+  // Numerus
+  if (word.endsWith('e') || word.endsWith('en') || word.endsWith('er') || word.endsWith('s')) {
+    features.number = 'PLUR';
+  } else {
+    features.number = 'SING';
+  }
+  
+  return features;
+};
+
+/**
+ * Analysiert Verb-Morphologie
+ * @private
+ */
+const analyzeVerbMorphology = (word) => {
+  const features = {};
+  const lower = word.toLowerCase();
+  
+  // Infinitiv
+  if (lower.endsWith('en')) {
+    features.verbForm = 'INF';
+  }
+  // Partizip Perfekt
+  else if (lower.startsWith('ge') && lower.endsWith('t')) {
+    features.verbForm = 'PART';
+    features.tense = 'PAST';
+  }
+  // Konjugierte Formen
+  else if (lower.endsWith('t') || lower.endsWith('st') || lower.endsWith('e')) {
+    features.verbForm = 'FIN';
+    features.tense = 'PRES';
+    
+    if (lower.endsWith('st')) {
+      features.person = '2';
+    } else if (lower.endsWith('t')) {
+      features.person = '3';
+    } else if (lower.endsWith('e')) {
+      features.person = '1';
+    }
+  }
+  
+  return features;
+};
+
+/**
+ * Analysiert Adjektiv-Morphologie
+ * @private
+ */
+const analyzeAdjectiveMorphology = (word) => {
+  const features = {};
+  
+  // Komparativ
+  if (word.endsWith('er') && !word.startsWith('er')) {
+    features.degree = 'CMP';
+  }
+  // Superlativ
+  else if (word.endsWith('st') || word.endsWith('ste')) {
+    features.degree = 'SUP';
+  }
+  // Positiv
+  else {
+    features.degree = 'POS';
+  }
+  
+  return features;
+};
+
+/**
+ * Analysiert Pronomen-Morphologie
+ * @private
+ */
+const analyzePronounMorphology = (word) => {
+  const features = {};
+  const lower = word.toLowerCase();
+  
+  // Person
+  if (['ich', 'mich', 'mir', 'mein'].includes(lower)) {
+    features.person = '1';
+    features.number = 'SING';
+  } else if (['du', 'dich', 'dir', 'dein'].includes(lower)) {
+    features.person = '2';
+    features.number = 'SING';
+  } else if (['er', 'sie', 'es', 'ihm', 'ihr', 'sein'].includes(lower)) {
+    features.person = '3';
+    features.number = 'SING';
+  } else if (['wir', 'uns', 'unser'].includes(lower)) {
+    features.person = '1';
+    features.number = 'PLUR';
+  } else if (['ihr', 'euch', 'euer'].includes(lower)) {
+    features.person = '2';
+    features.number = 'PLUR';
+  } else if (['sie', 'ihnen'].includes(lower)) {
+    features.person = '3';
+    features.number = 'PLUR';
+  }
+  
+  return features;
+};
+
+/**
+ * Schätzt Silbenzahl
+ * @private
+ */
+const estimateSyllables = (word) => {
+  if (!word || word.length === 0) return 0;
+  
+  const lower = word.toLowerCase();
+  const vowels = lower.match(/[aeiouäöüy]+/g);
+  if (!vowels) return 1;
+  
+  let count = vowels.length;
+  
+  // Korrigiere für deutsche Diphthonge
+  const diphthongs = ['au', 'äu', 'ei', 'eu', 'ai', 'ie'];
+  for (const diphthong of diphthongs) {
+    const matches = lower.match(new RegExp(diphthong, 'g'));
+    if (matches) {
+      count -= matches.length * 0.5;
+    }
+  }
+  
+  return Math.max(1, Math.round(count));
+};
+
+/**
+ * Schätzt Wort-Komplexität
+ * @private
+ */
+const estimateComplexity = (word) => {
+  const length = word.length;
+  const syllables = estimateSyllables(word);
+  
+  // Einfach: kurz und wenige Silben
+  if (length <= 5 && syllables <= 2) return 'simple';
+  // Komplex: lang oder viele Silben
+  if (length > 12 || syllables > 4) return 'complex';
+  // Sonst mittel
+  return 'medium';
 };
 
 /**
  * Reichert Tokens mit abgeleiteten Features an
- * Basiert nur auf Modell-Outputs, keine Heuristiken
  * @private
  */
 const enrichTokensWithDerivedFeatures = (tokens) => {
@@ -229,10 +515,7 @@ const enrichTokensWithDerivedFeatures = (tokens) => {
       return token;
     }
 
-    // Wortklassen-Features aus POS-Tag ableiten
     const wordClass = deriveWordClass(token);
-    
-    // Linguistische Features aus Morphologie ableiten
     const linguisticFeatures = deriveLinguisticFeatures(token);
 
     return {
@@ -275,7 +558,6 @@ const deriveLinguisticFeatures = (token) => {
     hasHyphen: token.text.includes('-'),
   };
 
-  // Morphologische Features wenn verfügbar
   if (token.morphology?.features) {
     features.morphological = token.morphology.features;
   }
@@ -293,7 +575,6 @@ const normalizeEntityType = (entityLabel) => {
   // Entferne B- und I- Präfixe (BIO-Tagging)
   const cleanLabel = entityLabel.replace(/^[BI]-/, '');
   
-  // Mappe zu ENTITY_LABELS
   const mapping = {
     'PER': 'PER',
     'PERSON': 'PER',
@@ -303,11 +584,7 @@ const normalizeEntityType = (entityLabel) => {
     'ORGANIZATION': 'ORG',
     'ORGANISATION': 'ORG',
     'MISC': 'MISC',
-    'MISCELLANEOUS': 'MISC',
-    'DATE': 'DATE',
-    'TIME': 'TIME',
-    'MONEY': 'MONEY',
-    'PERCENT': 'PERCENT'
+    'MISCELLANEOUS': 'MISC'
   };
   
   const normalized = mapping[cleanLabel.toUpperCase()] || cleanLabel;
@@ -315,75 +592,7 @@ const normalizeEntityType = (entityLabel) => {
 };
 
 /**
- * Extrahiert POS-Tag aus Modell-Output
- * @private
- */
-const extractPOSTag = (label) => {
-  if (!label) return 'X';
-  
-  // Entferne BIO-Präfixe
-  const cleanLabel = label.replace(/^[BI]-/, '').toUpperCase();
-  
-  // Direct mapping wenn Universal POS Tag
-  if (UNIVERSAL_POS_TAGS[cleanLabel]) {
-    return cleanLabel;
-  }
-  
-  // Versuche Mapping von alternativen Labels
-  const mapping = {
-    'NOUN': 'NOUN',
-    'PROPN': 'NOUN', // Proper Noun -> Noun
-    'VERB': 'VERB',
-    'ADJ': 'ADJ',
-    'ADV': 'ADV',
-    'PRON': 'PRON',
-    'DET': 'DET',
-    'ADP': 'ADP',
-    'CONJ': 'CCONJ',
-    'CCONJ': 'CCONJ',
-    'SCONJ': 'SCONJ',
-    'NUM': 'NUM',
-    'AUX': 'AUX',
-    'PART': 'PART',
-    'INTJ': 'INTJ',
-    'PUNCT': 'PUNCT',
-    'SYM': 'X',
-    'X': 'X'
-  };
-  
-  return mapping[cleanLabel] || 'X';
-};
-
-/**
- * Parsed morphologische Features aus Modell-Output
- * @private
- */
-const parseMorphologicalFeatures = (morphLabel) => {
-  if (!morphLabel) return {};
-  
-  const features = {};
-  
-  // Parse UD-Style Features (z.B. "Case=Nom|Gender=Masc|Number=Sing")
-  if (morphLabel.includes('=')) {
-    const parts = morphLabel.split('|');
-    for (const part of parts) {
-      const [key, value] = part.split('=');
-      if (key && value) {
-        const featureCategory = key.toUpperCase();
-        if (MORPHOLOGICAL_FEATURES[featureCategory]) {
-          features[key] = MORPHOLOGICAL_FEATURES[featureCategory][value] || value;
-        } else {
-          features[key] = value;
-        }
-      }
-    }
-  }
-  
-  return features;
-};
-
-/**
- * Analysiert Wort-Frequenzen (rein datengetrieben)
+ * Analysiert Wort-Frequenzen
  * 
  * @param {Array} tokens - Token-Array
  * @returns {Object} Frequenz-Analyse
@@ -391,89 +600,63 @@ const parseMorphologicalFeatures = (morphLabel) => {
 export const analyzeWordFrequencies = (tokens) => {
   const wordTokens = tokens.filter(t => !t.isPunctuation);
   const frequencies = new Map();
+  const firstOccurrence = new Map();
   
-  // Sammle Frequenzen
   for (const token of wordTokens) {
     const word = token.text.toLowerCase();
     
     if (!frequencies.has(word)) {
       frequencies.set(word, {
-        word: token.text, // Original-Schreibweise
         count: 0,
-        positions: [],
-        posTag: token.posTag || null,
-        entityType: token.entityType || null,
-        firstOccurrence: token.position
-      });
-    }
-    
-    const entry = frequencies.get(word);
-    entry.count++;
-    entry.positions.push(token.position);
-  }
-  
-  // Konvertiere zu sortiertem Array
-  const sortedFrequencies = Array.from(frequencies.values())
-    .sort((a, b) => b.count - a.count);
-  
-  // Berechne Statistiken
-  const totalWords = wordTokens.length;
-  const uniqueWords = frequencies.size;
-  const lexicalDiversity = uniqueWords / totalWords;
-  
-  return {
-    frequencies: sortedFrequencies,
-    totalWords,
-    uniqueWords,
-    lexicalDiversity: lexicalDiversity.toFixed(3),
-    mostFrequent: sortedFrequencies.slice(0, 10),
-    hapaxLegomena: sortedFrequencies.filter(f => f.count === 1).length, // Wörter die nur 1x vorkommen
-    statistics: {
-      mean: totalWords / uniqueWords,
-      median: calculateMedian(sortedFrequencies.map(f => f.count))
-    }
-  };
-};
-
-/**
- * Findet zusammengesetzte Wörter (Komposita)
- * Basiert auf NER und POS-Patterns
- * 
- * @param {Array} tokens - Token-Array
- * @returns {Array} Array von Komposita
- */
-export const findCompoundWords = (tokens) => {
-  const compounds = [];
-  
-  // Methode 1: Lange Wörter (typisch für deutsche Komposita)
-  for (const token of tokens) {
-    if (token.isPunctuation) continue;
-    
-    if (token.text.length >= 12) {
-      compounds.push({
         word: token.text,
-        position: token.position,
-        length: token.text.length,
-        type: 'long-word',
+        firstOccurrence: token.position,
         posTag: token.posTag,
         entityType: token.entityType
       });
     }
+    
+    const freq = frequencies.get(word);
+    freq.count++;
+    frequencies.set(word, freq);
   }
   
-  // Methode 2: Aufeinanderfolgende Nomen (Nomen-Komposita)
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const current = tokens[i];
-    const next = tokens[i + 1];
+  const sorted = Array.from(frequencies.values())
+    .sort((a, b) => b.count - a.count);
+  
+  return {
+    total: wordTokens.length,
+    unique: frequencies.size,
+    typeTokenRatio: (frequencies.size / wordTokens.length).toFixed(3),
+    topWords: sorted.slice(0, 20),
+    hapaxLegomena: sorted.filter(f => f.count === 1).length
+  };
+};
+
+/**
+ * Findet Komposita
+ * 
+ * @param {Array} tokens - Token-Array
+ * @returns {Array} Gefundene Komposita
+ */
+export const findCompoundWords = (tokens) => {
+  const compounds = [];
+  
+  for (const token of tokens) {
+    if (token.isPunctuation || !token.text) continue;
     
-    if (current.posTag === 'NOUN' && next.posTag === 'NOUN' && !next.isPunctuation) {
-      compounds.push({
-        word: `${current.text} ${next.text}`,
-        components: [current.text, next.text],
-        position: current.position,
-        type: 'noun-compound',
-        posTag: 'NOUN'
-      });
+    // Heuristik: Wörter mit Bindestrich oder sehr lange Wörter
+    if (token.text.includes('-') || token.text.length > 15) {
+      const parts = token.text.split(/[-\s]/);
+      
+      if (parts.length > 1 || token.text.length > 15) {
+        compounds.push({
+          word: token.text,
+          position: token.position,
+          length: token.text.length,
+          estimatedParts: parts.length > 1 ? parts : null,
+          posTag: token.posTag
+        });
+      }
     }
   }
   
@@ -481,27 +664,26 @@ export const findCompoundWords = (tokens) => {
 };
 
 /**
- * Findet seltene/interessante Wörter
+ * Findet seltene/komplexe Wörter
  * 
- * @param {Object} frequencyAnalysis - Ergebnis von analyzeWordFrequencies
- * @returns {Array} Array von seltenen Wörtern
+ * @param {Array} tokens - Token-Array
+ * @returns {Array} Seltene Wörter
  */
-export const findRareWords = (frequencyAnalysis) => {
-  if (!frequencyAnalysis || !frequencyAnalysis.frequencies) {
-    return [];
-  }
+export const findRareWords = (tokens) => {
+  const wordTokens = tokens.filter(t => !t.isPunctuation && t.wordClass?.isContentWord);
   
-  return frequencyAnalysis.frequencies
-    .filter(f => 
-      f.count === 1 && // Hapax Legomena
-      f.word.length > 4 && // Mindestlänge
-      f.posTag && ['NOUN', 'VERB', 'ADJ'].includes(f.posTag) // Content words
+  return wordTokens
+    .filter(t => 
+      t.text.length > 10 || 
+      (t.morphology?.syllables && t.morphology.syllables > 4) ||
+      t.morphology?.complexity === 'complex'
     )
-    .map(f => ({
-      word: f.word,
-      position: f.firstOccurrence,
-      posTag: f.posTag,
-      entityType: f.entityType
+    .map(t => ({
+      word: t.text,
+      position: t.position,
+      length: t.text.length,
+      syllables: t.morphology?.syllables,
+      posTag: t.posTag
     }));
 };
 
@@ -517,12 +699,10 @@ export const analyzeTokenDiversity = (tokens) => {
   const entityDistribution = {};
   
   for (const token of wordTokens) {
-    // POS-Verteilung
     if (token.posTag) {
       posDistribution[token.posTag] = (posDistribution[token.posTag] || 0) + 1;
     }
     
-    // Entity-Verteilung
     if (token.entityType) {
       entityDistribution[token.entityType] = (entityDistribution[token.entityType] || 0) + 1;
     }
@@ -550,21 +730,6 @@ export const analyzeTokenDiversity = (tokens) => {
     
     namedEntityRatio: (wordTokens.filter(t => t.entityType).length / total).toFixed(3)
   };
-};
-
-/**
- * Hilfsfunktion: Berechnet Median
- * @private
- */
-const calculateMedian = (numbers) => {
-  if (numbers.length === 0) return 0;
-  
-  const sorted = [...numbers].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
 };
 
 export default {

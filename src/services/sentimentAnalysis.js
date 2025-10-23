@@ -15,18 +15,15 @@ export const analyzeSentiment = async (text) => {
       throw new Error('Sentiment Model nicht geladen');
     }
 
-    // Verwende das Modell für den gesamten Text
     const results = await model(text);
-    
-    // BERT-Modelle geben Arrays zurück
     const result = Array.isArray(results) ? results[0] : results;
     
-    // Normalisiere Labels auf deutsch
-    const normalizedLabel = normalizeSentimentLabel(result.label);
+    // Normalisiere Labels und Scores
+    const { label, score } = normalizeSentiment(result);
     
     return {
-      label: normalizedLabel,
-      score: result.score,
+      label,
+      score,
       confidence: result.score,
       rawLabel: result.label,
       rawScore: result.score
@@ -51,7 +48,6 @@ export const analyzeSentenceSentiment = async (sentences) => {
       throw new Error('Sentiment Model nicht geladen');
     }
 
-    // Batch-Verarbeitung für Effizienz
     const batchSize = ANALYSIS_CONFIG.PROCESSING.BATCH_SIZE;
     const results = [];
     
@@ -59,18 +55,17 @@ export const analyzeSentenceSentiment = async (sentences) => {
       const batch = sentences.slice(i, i + batchSize);
       const texts = batch.map(s => s.text);
       
-      // Verarbeite Batch
       const batchResults = await model(texts);
       
-      // Kombiniere mit Satz-Daten
       for (let j = 0; j < batch.length; j++) {
         const modelResult = Array.isArray(batchResults[j]) ? batchResults[j][0] : batchResults[j];
+        const { label, score } = normalizeSentiment(modelResult);
         
         results.push({
           ...batch[j],
           sentiment: {
-            label: normalizeSentimentLabel(modelResult.label),
-            score: modelResult.score,
+            label,
+            score,
             confidence: modelResult.score,
             rawLabel: modelResult.label
           }
@@ -104,7 +99,6 @@ export const analyzeWordSentiment = async (text, tokens) => {
     const contextWindow = ANALYSIS_CONFIG.PROCESSING.CONTEXT_WINDOW;
     const wordSentiments = [];
     
-    // Verarbeite nur Wörter (keine Interpunktion)
     const wordTokens = tokens.filter(t => !t.isPunctuation);
     const batchSize = ANALYSIS_CONFIG.PROCESSING.BATCH_SIZE;
     
@@ -112,11 +106,9 @@ export const analyzeWordSentiment = async (text, tokens) => {
       const batch = wordTokens.slice(i, i + batchSize);
       const contextTexts = [];
       
-      // Erstelle Kontexte für jedes Wort im Batch
       for (const token of batch) {
         const tokenIndex = tokens.findIndex(t => t.position === token.position);
         
-        // Extrahiere Kontext-Fenster
         const contextStart = Math.max(0, tokenIndex - contextWindow);
         const contextEnd = Math.min(tokens.length, tokenIndex + contextWindow + 1);
         const contextTokens = tokens.slice(contextStart, contextEnd);
@@ -125,18 +117,17 @@ export const analyzeWordSentiment = async (text, tokens) => {
         contextTexts.push(contextText);
       }
       
-      // Analysiere Batch
       const batchResults = await model(contextTexts);
       
-      // Kombiniere Ergebnisse
       for (let j = 0; j < batch.length; j++) {
         const modelResult = Array.isArray(batchResults[j]) ? batchResults[j][0] : batchResults[j];
+        const { label, score } = normalizeSentiment(modelResult);
         
         wordSentiments.push({
           ...batch[j],
           sentiment: {
-            label: normalizeSentimentLabel(modelResult.label),
-            score: modelResult.score,
+            label,
+            score,
             confidence: modelResult.score,
             contextual: true,
             rawLabel: modelResult.label
@@ -145,7 +136,6 @@ export const analyzeWordSentiment = async (text, tokens) => {
       }
     }
     
-    // Füge Interpunktion ohne Sentiment hinzu
     const allTokens = tokens.map(token => {
       if (token.isPunctuation) {
         return { ...token, sentiment: null };
@@ -173,17 +163,17 @@ export const calculateSentimentStatistics = (sentiments) => {
   
   if (validSentiments.length === 0) {
     return {
-      overall: SENTIMENT_LABELS.NEUTRAL,
+      overall: SENTIMENT_LABELS.NEUTRAL.label,
       positiveCount: 0,
       negativeCount: 0,
       neutralCount: 0,
       averageScore: 0,
       averageConfidence: 0,
-      dominant: SENTIMENT_LABELS.NEUTRAL,
+      dominant: SENTIMENT_LABELS.NEUTRAL.label,
       distribution: { 
-        positive: 0, 
-        negative: 0, 
-        neutral: 0 
+        positive: '0.0', 
+        negative: '0.0', 
+        neutral: '0.0' 
       },
       confidence: 0
     };
@@ -198,37 +188,31 @@ export const calculateSentimentStatistics = (sentiments) => {
     return acc;
   }, { positive: 0, negative: 0, neutral: 0 });
 
-  // Berechne gewichtete Scores
+  // Berechne gewichtete Scores (verwende normalisierte Scores)
   const weightedScore = validSentiments.reduce((sum, item) => {
-    const label = item.sentiment.label.toLowerCase();
-    const score = item.sentiment.score;
-    
-    if (label.includes('positiv')) return sum + score;
-    if (label.includes('negativ')) return sum - score;
-    return sum;
+    return sum + (item.sentiment.score || 0);
   }, 0);
 
   const total = validSentiments.length;
   const averageScore = weightedScore / total;
   const averageConfidence = validSentiments.reduce((sum, item) => 
-    sum + (item.sentiment.confidence || item.sentiment.score), 0) / total;
+    sum + (item.sentiment.confidence || 0), 0) / total;
 
   // Bestimme dominantes Sentiment (nach Anzahl)
-  let dominant = SENTIMENT_LABELS.NEUTRAL;
+  let dominant = SENTIMENT_LABELS.NEUTRAL.label;
   const maxCount = Math.max(counts.positive, counts.negative, counts.neutral);
-  if (maxCount === counts.positive) dominant = SENTIMENT_LABELS.POSITIVE;
-  else if (maxCount === counts.negative) dominant = SENTIMENT_LABELS.NEGATIVE;
+  if (maxCount === counts.positive && counts.positive > 0) dominant = SENTIMENT_LABELS.POSITIVE.label;
+  else if (maxCount === counts.negative && counts.negative > 0) dominant = SENTIMENT_LABELS.NEGATIVE.label;
 
   // Bestimme Overall basierend auf gewichtetem Score
-  let overall = SENTIMENT_LABELS.NEUTRAL;
-  const threshold = ANALYSIS_CONFIG.THRESHOLDS.SENTIMENT_CONFIDENCE;
+  let overall = SENTIMENT_LABELS.NEUTRAL.label;
   
-  if (Math.abs(averageScore) < 0.1 || averageConfidence < threshold) {
-    overall = SENTIMENT_LABELS.NEUTRAL;
+  if (Math.abs(averageScore) < 0.2) {
+    overall = SENTIMENT_LABELS.NEUTRAL.label;
   } else if (averageScore > 0) {
-    overall = SENTIMENT_LABELS.POSITIVE;
+    overall = SENTIMENT_LABELS.POSITIVE.label;
   } else {
-    overall = SENTIMENT_LABELS.NEGATIVE;
+    overall = SENTIMENT_LABELS.NEGATIVE.label;
   }
 
   return {
@@ -244,127 +228,127 @@ export const calculateSentimentStatistics = (sentiments) => {
       negative: ((counts.negative / total) * 100).toFixed(1),
       neutral: ((counts.neutral / total) * 100).toFixed(1)
     },
-    confidence: averageConfidence
+    confidence: averageConfidence,
+    emotionalRange: calculateEmotionalRange(validSentiments).toFixed(3)
   };
 };
 
 /**
  * Findet emotionale Höhepunkte im Text
- * Verwendet Sliding-Window für Intensitäts-Peaks
  * 
- * @param {Array} sentiments - Array von Sentiment-Objekten mit Positionen
- * @returns {Array} Array von Höhepunkten
+ * @param {Array} sentiments - Array von Sentiment-Objekten
+ * @returns {Array} Emotionale Peaks
  */
 export const findEmotionalPeaks = (sentiments) => {
+  const validSentiments = sentiments.filter(s => s.sentiment);
+  if (validSentiments.length === 0) return [];
+
   const peaks = [];
-  const windowSize = ANALYSIS_CONFIG.PROCESSING.CONTEXT_WINDOW;
-  const validSentiments = sentiments.filter(s => s.sentiment && !s.isPunctuation);
-  
-  if (validSentiments.length < windowSize * 2) {
-    return peaks; // Zu wenig Daten
-  }
+  const threshold = 0.75; // Starkes Sentiment
 
-  for (let i = windowSize; i < validSentiments.length - windowSize; i++) {
+  for (let i = 0; i < validSentiments.length; i++) {
     const current = validSentiments[i];
-    if (!current.sentiment) continue;
+    const score = Math.abs(current.sentiment.score || 0);
+    const confidence = current.sentiment.confidence || 0;
 
-    // Berechne lokales Fenster
-    const windowStart = Math.max(0, i - windowSize);
-    const windowEnd = Math.min(validSentiments.length, i + windowSize + 1);
-    const window = validSentiments.slice(windowStart, windowEnd);
-    
-    // Berechne Intensität (absolute Abweichung von neutral)
-    const currentIntensity = Math.abs(getSentimentScore(current.sentiment));
-    const avgIntensity = window.reduce((sum, item) => 
-      sum + Math.abs(getSentimentScore(item.sentiment)), 0) / window.length;
-
-    // Peak wenn aktuelle Intensität signifikant höher als Durchschnitt
-    if (currentIntensity > avgIntensity * 1.5 && currentIntensity > 0.6) {
+    // Peak wenn hoher Score und hohe Confidence
+    if (score > threshold && confidence > 0.7) {
       peaks.push({
-        position: i,
-        tokenPosition: current.position,
+        position: current.position,
         word: current.text,
-        sentiment: current.sentiment,
-        intensity: currentIntensity.toFixed(3),
-        localAverage: avgIntensity.toFixed(3),
-        type: current.sentiment.label
+        sentiment: current.sentiment.label,
+        score: current.sentiment.score,
+        confidence: current.sentiment.confidence,
+        intensity: score
       });
     }
   }
 
-  return peaks;
+  return peaks.sort((a, b) => b.intensity - a.intensity);
 };
 
 /**
- * Analysiert Sentiment-Verlauf über Zeit
- * Verwendet Moving Average für Glättung
+ * Analysiert Sentiment-Trend über den Text
  * 
- * @param {Array} sentiments - Chronologisch sortierte Sentiments
- * @returns {Array} Verlaufs-Daten für Visualisierung
+ * @param {Array} sentiments - Array von Sentiment-Objekten
+ * @returns {Object} Trend-Analyse
  */
 export const analyzeSentimentTrend = (sentiments) => {
-  const validSentiments = sentiments.filter(s => s.sentiment && !s.isPunctuation);
-  if (validSentiments.length === 0) return [];
-  
-  const windowSize = Math.min(5, Math.floor(validSentiments.length / 10));
-  const trendData = [];
-
-  for (let i = 0; i < validSentiments.length; i++) {
-    const windowStart = Math.max(0, i - windowSize + 1);
-    const window = validSentiments.slice(windowStart, i + 1);
-    
-    // Berechne Moving Average
-    const avgScore = window.reduce((sum, item) => 
-      sum + getSentimentScore(item.sentiment), 0) / window.length;
-    
-    const avgConfidence = window.reduce((sum, item) => 
-      sum + (item.sentiment.confidence || item.sentiment.score), 0) / window.length;
-
-    trendData.push({
-      position: i,
-      tokenPosition: validSentiments[i].position,
-      word: validSentiments[i].text,
-      score: avgScore.toFixed(3),
-      confidence: avgConfidence.toFixed(3),
-      rawScore: getSentimentScore(validSentiments[i].sentiment).toFixed(3),
-      label: validSentiments[i].sentiment.label
-    });
+  const validSentiments = sentiments.filter(s => s.sentiment);
+  if (validSentiments.length < 5) {
+    return {
+      trend: 'stable',
+      slope: 0,
+      direction: 'neutral',
+      confidence: 0
+    };
   }
 
-  return trendData;
+  // Berechne lineare Regression
+  const scores = validSentiments.map((s, i) => ({
+    x: i,
+    y: s.sentiment.score || 0
+  }));
+
+  const n = scores.length;
+  const sumX = scores.reduce((sum, p) => sum + p.x, 0);
+  const sumY = scores.reduce((sum, p) => sum + p.y, 0);
+  const sumXY = scores.reduce((sum, p) => sum + (p.x * p.y), 0);
+  const sumXX = scores.reduce((sum, p) => sum + (p.x * p.x), 0);
+
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  
+  // Bestimme Trend
+  let trend = 'stable';
+  let direction = 'neutral';
+  
+  if (Math.abs(slope) < 0.01) {
+    trend = 'stable';
+  } else if (slope > 0.01) {
+    trend = 'improving';
+    direction = 'positive';
+  } else {
+    trend = 'declining';
+    direction = 'negative';
+  }
+
+  return {
+    trend,
+    slope: slope.toFixed(4),
+    direction,
+    confidence: Math.min(Math.abs(slope) * 10, 1).toFixed(3)
+  };
 };
 
 /**
- * Analysiert Sentiment-Shifts (plötzliche Änderungen)
+ * Analysiert Sentiment-Verschiebungen (Shifts)
  * 
- * @param {Array} sentiments - Array von Sentiments
- * @returns {Array} Array von Sentiment-Shifts
+ * @param {Array} sentiments - Array von Sentiment-Objekten
+ * @returns {Array} Gefundene Shifts
  */
 export const analyzeSentimentShifts = (sentiments) => {
-  const validSentiments = sentiments.filter(s => s.sentiment && !s.isPunctuation);
+  const validSentiments = sentiments.filter(s => s.sentiment);
+  if (validSentiments.length < 3) return [];
+
   const shifts = [];
-  
-  if (validSentiments.length < 2) return shifts;
+  const shiftThreshold = 0.5; // Minimum Score-Differenz für Shift
 
   for (let i = 1; i < validSentiments.length; i++) {
     const prev = validSentiments[i - 1];
     const curr = validSentiments[i];
     
-    const prevScore = getSentimentScore(prev.sentiment);
-    const currScore = getSentimentScore(curr.sentiment);
-    const difference = Math.abs(currScore - prevScore);
-    
-    // Shift wenn Differenz > Schwellenwert
-    if (difference > 0.5) {
+    const prevScore = prev.sentiment.score || 0;
+    const currScore = curr.sentiment.score || 0;
+    const scoreDiff = currScore - prevScore;
+
+    if (Math.abs(scoreDiff) > shiftThreshold) {
       shifts.push({
-        position: i,
-        fromWord: prev.text,
-        toWord: curr.text,
-        fromSentiment: prev.sentiment.label,
-        toSentiment: curr.sentiment.label,
-        fromScore: prevScore.toFixed(3),
-        toScore: currScore.toFixed(3),
-        difference: difference.toFixed(3)
+        position: curr.position,
+        word: curr.text,
+        from: prev.sentiment.label,
+        to: curr.sentiment.label,
+        magnitude: Math.abs(scoreDiff).toFixed(3),
+        direction: scoreDiff > 0 ? 'positive' : 'negative'
       });
     }
   }
@@ -373,51 +357,93 @@ export const analyzeSentimentShifts = (sentiments) => {
 };
 
 /**
- * Konvertiert Sentiment zu numerischem Score
- * Rein modellbasiert, keine Heuristiken
+ * Normalisiert Sentiment-Result aus verschiedenen Modellen
+ * Konvertiert Star-Ratings und verschiedene Label-Formate
  * 
- * @param {Object} sentiment - Sentiment Objekt
- * @returns {number} Score zwischen -1 und 1
+ * @private
  */
-const getSentimentScore = (sentiment) => {
-  if (!sentiment || !sentiment.label) return 0;
+const normalizeSentiment = (result) => {
+  if (!result || !result.label) {
+    return {
+      label: SENTIMENT_LABELS.NEUTRAL.label,
+      score: 0
+    };
+  }
+
+  const label = result.label.toLowerCase();
+  const modelScore = result.score || 0;
   
-  const label = sentiment.label.toLowerCase();
-  const score = sentiment.score || 0.5;
+  // Star-Rating System (1-5 Sterne)
+  if (label.includes('star')) {
+    if (label.includes('5 stars') || label.includes('5 star')) {
+      return { label: SENTIMENT_LABELS.POSITIVE.label, score: 0.9 };
+    }
+    if (label.includes('4 stars') || label.includes('4 star')) {
+      return { label: SENTIMENT_LABELS.POSITIVE.label, score: 0.6 };
+    }
+    if (label.includes('3 stars') || label.includes('3 star')) {
+      return { label: SENTIMENT_LABELS.NEUTRAL.label, score: 0 };
+    }
+    if (label.includes('2 stars') || label.includes('2 star')) {
+      return { label: SENTIMENT_LABELS.NEGATIVE.label, score: -0.6 };
+    }
+    if (label.includes('1 star')) {
+      return { label: SENTIMENT_LABELS.NEGATIVE.label, score: -0.9 };
+    }
+  }
   
-  if (label.includes('positiv') || label === 'pos') return score;
-  if (label.includes('negativ') || label === 'neg') return -score;
-  return 0; // neutral
+  // Direkte Label-Matches
+  const positiveLabels = ['positive', 'positiv', 'pos', 'good', 'great'];
+  const negativeLabels = ['negative', 'negativ', 'neg', 'bad', 'poor'];
+  const neutralLabels = ['neutral', 'mixed'];
+  
+  if (positiveLabels.some(l => label.includes(l))) {
+    // Score bleibt positiv
+    return { label: SENTIMENT_LABELS.POSITIVE.label, score: Math.abs(modelScore) };
+  }
+  if (negativeLabels.some(l => label.includes(l))) {
+    // Score wird negativ
+    return { label: SENTIMENT_LABELS.NEGATIVE.label, score: -Math.abs(modelScore) };
+  }
+  if (neutralLabels.some(l => label.includes(l))) {
+    return { label: SENTIMENT_LABELS.NEUTRAL.label, score: 0 };
+  }
+  
+  // Fallback
+  return { label: SENTIMENT_LABELS.NEUTRAL.label, score: 0 };
 };
 
 /**
- * Normalisiert Sentiment-Labels auf deutsche Begriffe
- * 
- * @param {string} label - Original Label vom Modell
- * @returns {string} Normalisiertes deutsches Label
+ * Konvertiert Sentiment-Objekt zu numerischem Score
+ * @private
  */
-const normalizeSentimentLabel = (label) => {
-  if (!label) return SENTIMENT_LABELS.NEUTRAL;
+const getSentimentScore = (sentiment) => {
+  if (!sentiment) return 0;
   
-  const labelLower = label.toLowerCase();
-  
-  // Mapping verschiedener Label-Formate
-  const positiveLabels = ['positive', 'positiv', 'pos', '5 stars', '4 stars', 'good', 'great'];
-  const negativeLabels = ['negative', 'negativ', 'neg', '1 star', '2 stars', 'bad', 'poor'];
-  const neutralLabels = ['neutral', '3 stars', 'mixed'];
-  
-  if (positiveLabels.some(l => labelLower.includes(l))) {
-    return SENTIMENT_LABELS.POSITIVE;
-  }
-  if (negativeLabels.some(l => labelLower.includes(l))) {
-    return SENTIMENT_LABELS.NEGATIVE;
-  }
-  if (neutralLabels.some(l => labelLower.includes(l))) {
-    return SENTIMENT_LABELS.NEUTRAL;
+  // Verwende den normalisierten Score wenn vorhanden
+  if (typeof sentiment.score === 'number') {
+    return sentiment.score;
   }
   
-  // Fallback: Verwende Score wenn verfügbar
-  return SENTIMENT_LABELS.NEUTRAL;
+  // Fallback auf Label-basierte Konversion
+  const label = sentiment.label.toLowerCase();
+  if (label.includes('positiv')) return 1;
+  if (label.includes('negativ')) return -1;
+  return 0;
+};
+
+/**
+ * Berechnet emotionale Spannweite
+ * @private
+ */
+const calculateEmotionalRange = (sentiments) => {
+  if (sentiments.length === 0) return 0;
+  
+  const scores = sentiments.map(s => getSentimentScore(s.sentiment));
+  const max = Math.max(...scores);
+  const min = Math.min(...scores);
+  
+  return max - min;
 };
 
 /**
@@ -437,7 +463,6 @@ export const analyzeSentimentConsistency = (sentiments) => {
     };
   }
   
-  // Berechne Varianz der Scores
   const scores = validSentiments.map(s => getSentimentScore(s.sentiment));
   const mean = scores.reduce((sum, s) => sum + s, 0) / scores.length;
   const variance = scores.reduce((sum, s) => sum + Math.pow(s - mean, 2), 0) / scores.length;
