@@ -7,7 +7,7 @@ import { FileText, X, Send } from 'lucide-react';
 const TextInput = ({ 
   onAnalyze, 
   isAnalyzing = false,
-  placeholder = "Geben Sie hier Ihren deutschen Text oder Ihr Gedicht ein...",
+  placeholder = "Gib hier den Text oder das Gedicht ein...",
   maxLength = 5000
 }) => {
   const [text, setText] = useState('');
@@ -28,7 +28,7 @@ const TextInput = ({
 
   const handleSubmit = () => {
     if (text.trim().length < 10) {
-      setError('Bitte geben Sie mindestens 10 Zeichen ein');
+      setError('Mindestens 10 Zeichen ein');
       return;
     }
 

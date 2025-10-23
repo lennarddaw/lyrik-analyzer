@@ -67,10 +67,10 @@ function App() {
               <BookOpen className="w-8 h-8 text-blue-600" />
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">
-                  Deutscher Lyrik Analyzer
+                  Lyrik Analyse
                 </h1>
                 <p className="text-sm text-gray-600">
-                  KI-gestützte Analyse deutscher Texte und Gedichte
+                  Analyse deutscher Texte und Gedichte
                 </p>
               </div>
             </div>
@@ -210,15 +210,6 @@ function App() {
                   onLoadModel={loadSingleModel}
                   onUnloadModel={unloadModel}
                 />
-
-                {/* Quick Info */}
-                <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <h4 className="font-medium text-blue-900 mb-2">💡 Tipp</h4>
-                  <p className="text-sm text-blue-700">
-                    Laden Sie mindestens das <strong>Sentiment Model</strong> für eine
-                    vollständige Analyse. Die Models werden beim ersten Laden gecacht.
-                  </p>
-                </div>
               </div>
             </div>
           )}

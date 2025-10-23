@@ -53,7 +53,7 @@ const ModelSelector = ({
                       : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  {isLoaded ? 'Entladen' : 'Laden'}
+                  {isLoaded ? 'Löschen' : 'Laden'}
                 </button>
               </div>
 

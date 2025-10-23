@@ -37,16 +37,16 @@ const MetricsPanel = ({ analysisResult }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard
             icon={Hash}
-            label="WÃ¶rter"
+            label="Wörter"
             value={summary.basicStats.wordCount}
-            subtext={`Ã˜ ${summary.basicStats.avgWordLength} Zeichen/Wort`}
+            subtext={` ${summary.basicStats.avgWordLength} Zeichen/Wort`}
             color="blue"
           />
           <MetricCard
             icon={BookOpen}
-            label="SÃ¤tze"
+            label="Sätze"
             value={summary.basicStats.sentenceCount}
-            subtext={`Ã˜ ${summary.basicStats.avgWordsPerSentence} WÃ¶rter/Satz`}
+            subtext={` ${summary.basicStats.avgWordsPerSentence} Wörter/Satz`}
             color="green"
           />
           <MetricCard
