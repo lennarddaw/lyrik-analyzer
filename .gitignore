@@ -22,3 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ML Models (optional - kann auskommentiert werden wenn Models lokal bleiben sollen)
+# public/models/*
+# !public/models/.gitkeep
