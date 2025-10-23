@@ -1,0 +1,19 @@
+C:\Users\Admin Howzer AI\projects\lyrik-analyzer
+├── public
+│   └── vite.svg
+├── src
+│   ├── assets
+│   │   └── react.svg
+│   ├── App.css
+│   ├── App.jsx
+│   ├── index.css
+│   └── main.jsx
+├── .gitignore
+├── eslint.config.js
+├── index.html
+├── package-lock.json
+├── package.json
+├── README.md
+├── tree.txt
+├── tree_dump.py
+└── vite.config.js
