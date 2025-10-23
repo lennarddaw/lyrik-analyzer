@@ -168,7 +168,7 @@ const MetricsPanel = ({ analysisResult }) => {
       {summary.complexity && (
         <div className="analysis-card">
           <div className="flex items-center justify-between mb-4">
-            <h4 className="font-semibold">Text-KomplexitÃ¤t</h4>
+            <h4 className="font-semibold">Text-Komplexität</h4>
             <span className={`metric-badge ${
               summary.complexity.level === 'Sehr komplex' ? 'bg-red-100 text-red-800' :
               summary.complexity.level === 'Komplex' ? 'bg-orange-100 text-orange-800' :
@@ -181,7 +181,7 @@ const MetricsPanel = ({ analysisResult }) => {
           
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-gray-600">KomplexitÃ¤ts-Score</span>
+              <span className="text-gray-600">Komplexitäts-Score</span>
               <span className="font-semibold">{summary.complexity.score} / 100</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">

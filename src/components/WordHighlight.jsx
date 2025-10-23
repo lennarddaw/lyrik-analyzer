@@ -27,9 +27,11 @@ const WordHighlight = ({
   const getBackgroundStyle = () => {
     switch (highlightMode) {
       case 'sentiment':
-        if (sentiment && sentiment.label) {
-          const score = sentiment.label === 'positiv' ? sentiment.score : 
-                       sentiment.label === 'negativ' ? -sentiment.score : 0;
+        if (sentiment && sentiment.score !== undefined) {
+          // KORREKTUR: Verwende score direkt, da er bereits normalisiert ist
+          // score ist bereits -1 bis 1 (negativ bis positiv)
+          const score = sentiment.score;
+          
           return {
             backgroundColor: getSentimentRGB(score),
             opacity: getColorIntensity(sentiment.confidence || 0.5)
@@ -69,7 +71,11 @@ const WordHighlight = ({
 
     // Sentiment
     if (sentiment) {
-      parts.push(`Sentiment: ${sentiment.label} (${(sentiment.confidence * 100).toFixed(1)}%)`);
+      const scoreDisplay = sentiment.score !== undefined 
+        ? `Score: ${sentiment.score.toFixed(2)}`
+        : '';
+      parts.push(`Sentiment: ${sentiment.label} ${scoreDisplay}`);
+      parts.push(`Confidence: ${(sentiment.confidence * 100).toFixed(1)}%`);
     }
 
     // POS Tag
@@ -79,11 +85,11 @@ const WordHighlight = ({
 
     // Entity
     if (token.entity) {
-      parts.push(`Entity: ${token.entityType}`);
+      parts.push(`Entity: ${token.entityType} (${(token.entityScore * 100).toFixed(0)}%)`);
     }
 
     // Morphologie
-    if (token.morphology) {
+    if (token.morphology && token.morphology.syllables) {
       parts.push(`Silben: ${token.morphology.syllables}`);
     }
 
@@ -95,7 +101,9 @@ const WordHighlight = ({
   return (
     <span className="relative inline-block">
       <span
-        className={`word-token ${selected ? 'ring-2 ring-blue-500' : ''}`}
+        className={`word-token px-1 py-0.5 rounded cursor-pointer transition-all ${
+          selected ? 'ring-2 ring-blue-500' : ''
+        } ${isHovered ? 'scale-105' : ''}`}
         style={backgroundStyle}
         onClick={() => onClick && onClick(token)}
         onMouseEnter={() => setIsHovered(true)}
