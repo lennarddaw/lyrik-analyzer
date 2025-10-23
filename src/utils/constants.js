@@ -1,22 +1,23 @@
 // ML Model Konfigurationen
+// ML Model Konfigurationen - DEUTSCHE/MULTILINGUALE MODELS
 export const MODELS = {
   SENTIMENT: {
-    name: 'Xenova/bert-base-german-dbmdz-cased',
+    name: 'Xenova/bert-base-multilingual-uncased-sentiment', // ✅ Funktioniert mit Deutsch!
     task: 'sentiment-analysis',
     label: 'Sentiment Analyse'
   },
   EMOTION: {
-    name: 'Xenova/bert-base-german-dbmdz-cased',
+    name: 'Xenova/bert-base-multilingual-uncased-sentiment', // Gleich wie Sentiment
     task: 'text-classification',
     label: 'Emotion Erkennung'
   },
   NER: {
-    name: 'Xenova/bert-base-german-dbmdz-cased',
+    name: 'Xenova/bert-base-NER', // ✅ Multilingual NER
     task: 'token-classification',
     label: 'Named Entity Recognition'
   },
   EMBEDDINGS: {
-    name: 'Xenova/distilbert-base-german-cased',
+    name: 'Xenova/distiluse-base-multilingual-cased-v2', // ✅ Deutsch-Embeddings
     task: 'feature-extraction',
     label: 'Semantische Embeddings'
   }
