@@ -37,16 +37,16 @@ const MetricsPanel = ({ analysisResult }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard
             icon={Hash}
-            label="Wörter"
+            label="WÃ¶rter"
             value={summary.basicStats.wordCount}
-            subtext={`Ø ${summary.basicStats.avgWordLength} Zeichen/Wort`}
+            subtext={`Ã˜ ${summary.basicStats.avgWordLength} Zeichen/Wort`}
             color="blue"
           />
           <MetricCard
             icon={BookOpen}
-            label="Sätze"
+            label="SÃ¤tze"
             value={summary.basicStats.sentenceCount}
-            subtext={`Ø ${summary.basicStats.avgWordsPerSentence} Wörter/Satz`}
+            subtext={`Ã˜ ${summary.basicStats.avgWordsPerSentence} WÃ¶rter/Satz`}
             color="green"
           />
           <MetricCard
@@ -164,11 +164,11 @@ const MetricsPanel = ({ analysisResult }) => {
         </div>
       )}
 
-      {/* Komplexität */}
+      {/* KomplexitÃ¤t */}
       {summary.complexity && (
         <div className="analysis-card">
           <div className="flex items-center justify-between mb-4">
-            <h4 className="font-semibold">Text-Komplexität</h4>
+            <h4 className="font-semibold">Text-KomplexitÃ¤t</h4>
             <span className={`metric-badge ${
               summary.complexity.level === 'Sehr komplex' ? 'bg-red-100 text-red-800' :
               summary.complexity.level === 'Komplex' ? 'bg-orange-100 text-orange-800' :
@@ -181,7 +181,7 @@ const MetricsPanel = ({ analysisResult }) => {
           
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-gray-600">Komplexitäts-Score</span>
+              <span className="text-gray-600">KomplexitÃ¤ts-Score</span>
               <span className="font-semibold">{summary.complexity.score} / 100</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">
@@ -209,7 +209,7 @@ const MetricsPanel = ({ analysisResult }) => {
                 key={index}
                 className="metric-badge bg-blue-100 text-blue-800"
               >
-                {theme}
+                {typeof theme === "string" ? theme : theme.phrase || theme}
               </span>
             ))}
           </div>
