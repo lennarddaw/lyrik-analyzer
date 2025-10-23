@@ -1,7 +1,7 @@
 import { pipeline, env } from '@xenova/transformers';
 import { MODELS } from '../utils/constants';
 
-// Konfiguriere transformers.js für lokale Nutzung
+// Konfiguriere transformers.js fÃ¼r lokale Nutzung
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
@@ -13,9 +13,9 @@ class ModelLoader {
   }
 
   /**
-   * Lädt ein ML-Model
+   * LÃ¤dt ein ML-Model
    * @param {string} modelKey - Key aus MODELS Konstante
-   * @param {function} progressCallback - Callback für Lade-Fortschritt
+   * @param {function} progressCallback - Callback fÃ¼r Lade-Fortschritt
    * @returns {Promise} Model Pipeline
    */
   async loadModel(modelKey, progressCallback = null) {
@@ -63,6 +63,12 @@ class ModelLoader {
   async _loadModelPipeline(modelConfig, modelKey) {
     try {
       const callback = this.loadingCallbacks.get(modelKey);
+      // Check if this is a rule-based model (no ML model to load)
+      if (!modelConfig.name) {
+        console.log(`ℹ️ Regelbasiertes Model: ${modelConfig.label} (kein ML-Model erforderlich)`);
+        return null; // Return null for rule-based models
+      }
+
       
       const model = await pipeline(
         modelConfig.task,
@@ -80,18 +86,18 @@ class ModelLoader {
         }
       );
 
-      console.log(`✅ Model geladen: ${modelConfig.label}`);
+      console.log(`âœ… Model geladen: ${modelConfig.label}`);
       return model;
     } catch (error) {
-      console.error(`❌ Fehler beim Laden von ${modelConfig.label}:`, error);
+      console.error(`âŒ Fehler beim Laden von ${modelConfig.label}:`, error);
       throw new Error(`Model konnte nicht geladen werden: ${error.message}`);
     }
   }
 
   /**
-   * Lädt mehrere Models parallel
+   * LÃ¤dt mehrere Models parallel
    * @param {Array} modelKeys - Array von Model-Keys
-   * @param {function} progressCallback - Callback für Gesamt-Fortschritt
+   * @param {function} progressCallback - Callback fÃ¼r Gesamt-Fortschritt
    * @returns {Promise<Object>} Object mit geladenen Models
    */
   async loadMultipleModels(modelKeys, progressCallback = null) {
@@ -139,7 +145,7 @@ class ModelLoader {
   }
 
   /**
-   * Gibt ein geladenes Model zurück
+   * Gibt ein geladenes Model zurÃ¼ck
    * @param {string} modelKey - Model Key
    * @returns {Object|null} Model oder null
    */
@@ -148,7 +154,7 @@ class ModelLoader {
   }
 
   /**
-   * Prüft ob ein Model geladen ist
+   * PrÃ¼ft ob ein Model geladen ist
    * @param {string} modelKey - Model Key
    * @returns {boolean}
    */
@@ -157,7 +163,7 @@ class ModelLoader {
   }
 
   /**
-   * Prüft ob ein Model gerade geladen wird
+   * PrÃ¼ft ob ein Model gerade geladen wird
    * @param {string} modelKey - Model Key
    * @returns {boolean}
    */
@@ -166,7 +172,7 @@ class ModelLoader {
   }
 
   /**
-   * Gibt alle geladenen Models zurück
+   * Gibt alle geladenen Models zurÃ¼ck
    * @returns {Array} Array von Model-Keys
    */
   getLoadedModels() {
@@ -174,7 +180,7 @@ class ModelLoader {
   }
 
   /**
-   * Entlädt ein Model aus dem Speicher
+   * EntlÃ¤dt ein Model aus dem Speicher
    * @param {string} modelKey - Model Key
    */
   unloadModel(modelKey) {
@@ -185,7 +191,7 @@ class ModelLoader {
   }
 
   /**
-   * Entlädt alle Models
+   * EntlÃ¤dt alle Models
    */
   unloadAllModels() {
     this.models.clear();
@@ -195,7 +201,7 @@ class ModelLoader {
   }
 
   /**
-   * Gibt Speicher-Informationen zurück
+   * Gibt Speicher-Informationen zurÃ¼ck
    * @returns {Object} Speicher-Info
    */
   getMemoryInfo() {
@@ -212,7 +218,7 @@ const modelLoader = new ModelLoader();
 
 export default modelLoader;
 
-// Utility Funktionen für direkten Zugriff
+// Utility Funktionen fÃ¼r direkten Zugriff
 export const loadModel = (modelKey, progressCallback) => 
   modelLoader.loadModel(modelKey, progressCallback);
 
